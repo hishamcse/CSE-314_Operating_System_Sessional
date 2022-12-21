@@ -89,3 +89,16 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// fetch argumnents of the trace system call
+uint64
+sys_trace(void)
+{
+  int sys_call_number;
+  argint(0, &sys_call_number);
+  if(sys_call_number < 0) {
+     return -1;
+  }
+  myproc()->sys_call_number = sys_call_number;
+  return 0;
+}

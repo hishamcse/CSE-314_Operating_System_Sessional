@@ -162,6 +162,7 @@ freeproc(struct proc *p)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
+  p->sys_call_number = 0;
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -295,6 +296,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->sys_call_number = p->sys_call_number;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
