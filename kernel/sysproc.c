@@ -102,3 +102,13 @@ sys_trace(void)
   myproc()->sys_call_number = sys_call_number;
   return 0;
 }
+
+// implements sysinfo system call
+uint64
+sys_sysinfo(void)
+{
+  printf("\nsysinfo system call prints:\n");
+  printf("free-memory: %d\n", kcalculate_freemem_bytes());
+  printf("n_proc  : %d\n\n", calculate_existing_processes());
+  return 0;
+}
