@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
 
 struct cpu cpus[NCPU];
 
@@ -124,6 +125,9 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->tickets_original = 1;
+  p->tickets_current = 1;
+  p->time_slices = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -162,6 +166,9 @@ freeproc(struct proc *p)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
+  p->tickets_original = 0;
+  p->tickets_current = 0;
+  p->time_slices = 0;
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -295,6 +302,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->tickets_original = p->tickets_original;
+  np->tickets_current = p->tickets_original;
+  np->time_slices = p->time_slices;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -434,6 +444,29 @@ wait(uint64 addr)
   }
 }
 
+// Get Total Number of Current Tickets
+int
+getTotalCurrentTickets(void)
+{
+  struct proc *p;
+  int total_tickets = 0;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == RUNNABLE) {
+      total_tickets += p->tickets_current;
+    }
+    release(&p->lock);
+  }
+  return total_tickets;
+}
+
+// generate random number between 0 and total_tickets - 1
+int
+generateRandomNumber(int total_tickets)
+{
+  return (next_random() % total_tickets);
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -452,19 +485,40 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
+    int total_current_tickets = getTotalCurrentTickets();
+    if(total_current_tickets == 0) {
+      for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        p->tickets_current = p->tickets_original;
+        release(&p->lock);
+      }
+    }
+    int random_number = generateRandomNumber(total_current_tickets);
+
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
+        int diff = random_number - p->tickets_current;
+        if(diff >= 0) {                 // will work exactly same as probability distribution based scheduler
+          random_number = diff;
+          release(&p->lock);
+          continue;
+        }
+
         p->state = RUNNING;
+        p->time_slices++;
         c->proc = p;
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+        p->tickets_current--;
         c->proc = 0;
+        release(&p->lock);
+        break;
       }
       release(&p->lock);
     }
@@ -680,4 +734,44 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// implement settickets system call
+int
+settickets(int number)
+{
+  if(number < 1)
+    return -1;
+  int pid = myproc()->pid;
+  struct proc *p;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->pid == pid) {
+        p->tickets_original = number;
+        p->tickets_current = number;
+        release(&p->lock);
+        return 0;
+    }
+    release(&p->lock);
+  }
+  return -1;
+}
+
+// implement getpinfo system call
+int
+getpinfo(struct pstat *ps)
+{
+  struct proc *p;
+  int i = 0;
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    ps->pid[i] = p->pid;
+    ps->inuse[i] = p->state != UNUSED;
+    ps->tickets_original[i] = p->tickets_original;
+    ps->tickets_current[i] = p->tickets_current;
+    ps->time_slices[i] = p->time_slices;
+    release(&p->lock);
+    i++;
+  }
+  return 0;
 }

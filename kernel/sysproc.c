@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "pstat.h"
 
 uint64
 sys_exit(void)
@@ -88,4 +89,32 @@ sys_uptime(void)
   xticks = ticks;
   release(&tickslock);
   return xticks;
+}
+
+// return how many tickets the process has
+uint64
+sys_settickets(void)
+{
+  int tickets;
+  argint(0, &tickets);
+  if(tickets < 1)
+    return -1;
+  settickets(tickets);
+  return 0;
+}
+
+// return info about processes, including time slices count each has been schedules
+// and process id of each process
+uint64
+sys_getpinfo(void)
+{
+  uint64 ps;
+  struct pstat ps2;
+  argaddr(0, &ps);
+  if(ps < 0)
+    return -1;
+  getpinfo(&ps2);
+  if(copyout(myproc()->pagetable, ps, (char*)&ps2, sizeof(ps2)) < 0)
+    return -1;
+  return 0;
 }
