@@ -28,6 +28,22 @@ if [ "$out" = "PASSED" ]; then
     correct=$((correct+1))
 fi
 
+echo "CASE4: Reader Preference with 3 reader and 5 writer"
+total=$((total+1))
+out=`./rwlock-reader-pref 3 5`
+echo $out
+if [ "$out" = "PASSED" ]; then
+    correct=$((correct+1))
+fi
+
+echo "CASE5: Reader Preference with 10 reader and 15 writer"
+total=$((total+1))
+out=`./rwlock-reader-pref 10 15`
+echo $out
+if [ "$out" = "PASSED" ]; then
+    correct=$((correct+1))
+fi
+
 echo "TESTSET: Running Testcases with writer preference"
 g++ test-writer-pref.cpp rwlock-writer-pref.cpp -o rwlock-writer-pref -lpthread
 
@@ -51,6 +67,22 @@ fi
 echo "CASE3: Writer Preference with 5 reader and 5 writer"
 total=$((total+1))
 out=`./rwlock-writer-pref 5 5`
+echo $out
+if [ "$out" = "PASSED" ]; then
+    correct=$((correct+1))
+fi
+
+echo "CASE4: Writer Preference with 3 reader and 5 writer"
+total=$((total+1))
+out=`./rwlock-writer-pref 3 5`
+echo $out
+if [ "$out" = "PASSED" ]; then
+    correct=$((correct+1))
+fi
+
+echo "CASE5: Writer Preference with 10 reader and 15 writer"
+total=$((total+1))
+out=`./rwlock-writer-pref 10 15`
 echo $out
 if [ "$out" = "PASSED" ]; then
     correct=$((correct+1))
