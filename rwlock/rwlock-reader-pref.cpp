@@ -14,9 +14,9 @@ void ReaderLock(struct read_write_lock * rw)
 {
   //	Write the code for aquiring read-write lock by the reader.
   pthread_mutex_lock(&rw->mutex);
+  rw->readers++;
   while(rw->writers > 0)
     pthread_cond_wait(&rw->readLock, &rw->mutex);
-  rw->readers++;
   pthread_mutex_unlock(&rw->mutex);
 }
 
