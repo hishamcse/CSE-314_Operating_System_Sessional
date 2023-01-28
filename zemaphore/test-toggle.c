@@ -21,7 +21,9 @@ void *justprint(void *data)
   {
     zem_down(&zem_t_threads[thread_id]); // wait for my turn
     printf("This is thread %d\n", thread_id);
-    int next_thread = (thread_id + 1) % NUM_THREADS;
+    int next_thread = (thread_id + 1);
+    if (next_thread == NUM_THREADS)
+      next_thread = 0;                   // wrap around to thread 0 (last thread
     zem_up(&zem_t_threads[next_thread]); // signal next thread
   }
   return 0;
