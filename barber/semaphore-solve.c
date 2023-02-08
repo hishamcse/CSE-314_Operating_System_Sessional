@@ -9,9 +9,7 @@
 #include <pthread.h>
 #include "zemaphore.h"
 
-#define MAX_CUSTOMERS 10
-
-int total_chairs;
+int total_chairs, max_customers;
 int waiting_customers;
 zem_t barber;
 zem_t customer;
@@ -60,7 +58,7 @@ void *customer_func(void *data)
 
 int main(int argc, char *argv[])
 {
-    if (argc != 2)
+    if (argc != 3)
     {
         printf("Usage: ./barber <number of chairs in waiting room> \n");
         exit(1);
@@ -69,6 +67,7 @@ int main(int argc, char *argv[])
     // printf("Barber shop problem with semaphores\n");
 
     total_chairs = atoi(argv[1]);
+    max_customers = atoi(argv[2]);
     waiting_customers = 0;
 
     zem_init(&barber, 0);
@@ -78,25 +77,19 @@ int main(int argc, char *argv[])
     pthread_t barber_thread;
     pthread_create(&barber_thread, NULL, barber_func, NULL);
 
-    pthread_t customer_threads[MAX_CUSTOMERS];
-    int customer_ids[MAX_CUSTOMERS];
-    for (int i = 0; i < MAX_CUSTOMERS; i++)
+    pthread_t customer_threads[max_customers];
+    int customer_ids[max_customers];
+    for (int i = 0; i < max_customers; i++)
     {
         customer_ids[i] = i;
         pthread_create(&customer_threads[i], NULL, customer_func, (void *)&customer_ids[i]);
     }
 
     pthread_join(barber_thread, NULL);
-    for (int i = 0; i < MAX_CUSTOMERS; i++)
+    for (int i = 0; i < max_customers; i++)
     {
         pthread_join(customer_threads[i], NULL);
     }
-
-    // printf("Main thread sleeping for %d seconds\n", 2);
-    // sleep(2);
-    // /* 6. Exit.  */
-    // printf("Main thread exiting\n");
-    // exit(0);
 
     return 0;
 }
