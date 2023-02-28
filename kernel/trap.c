@@ -29,6 +29,47 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+// Copy On Write fault handler
+// 0 -> success
+// -1 -> failure
+int COW_fault_handler(pagetable_t pagetable, uint64 va)
+{
+  uint64 pa;
+  pte_t *pte = walk(pagetable, va, 0);
+
+  // check if the page table entry is valid, user accessible
+  if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+  {
+    return -1;
+  }
+
+  // check if the page is COW
+  if ((*pte & PTE_RSW) == 0)
+  {
+    return 1;
+  }
+
+  // allocate a new page
+  char *mem = kalloc();
+  if (mem == 0)
+  {
+    return -1;
+  }
+
+  // copy the data from the old page to the new page
+  pa = PTE2PA(*pte);
+  memmove(mem, (char *)pa, PGSIZE);
+
+  // update the page table entry
+  uint flags = (PTE_FLAGS(*pte) & ~PTE_RSW) | PTE_W;
+  *pte = PA2PTE(mem) | flags;
+
+  // free the old page
+  kfree((void *)pa);
+
+  return 0;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,7 +108,26 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  }
+  else if (r_scause() == 15) // page fault caused by write
+  {
+    // virtual address that caused the fault
+    uint64 va = r_stval();
+
+    // process killed if
+    // 1. va is not in the process's address space
+    // 2. va is out of the process's stack
+    // 2. COW fault handler failed
+    if (va >= MAXVA ||
+        (va <= PGROUNDDOWN(p->trapframe->sp) && va >= PGROUNDDOWN(p->trapframe->sp) - PGSIZE) ||
+        COW_fault_handler(p->pagetable, PGROUNDDOWN(va)) != 0)
+    {
+      goto trap_kill;
+    }
+  }
+  else
+  {
+  trap_kill:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);

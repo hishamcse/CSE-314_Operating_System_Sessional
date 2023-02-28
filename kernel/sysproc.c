@@ -89,3 +89,13 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// return the number of used pages & free pages in the system
+uint64
+sys_statPage(void)
+{
+  printf("Statistics of page usage\n");
+  printf("Number of used pages: %d\n", usedPages_count());
+  printf("Number of free pages: %d\n", freePages_count());
+  return 0;
+}

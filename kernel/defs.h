@@ -63,6 +63,11 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void            increase_ref_count(void *);
+void            decrease_ref_count(void *);
+void            kfree_ref_count(void *);
+int             get_ref_count(void *);
+uint64          freePages_count(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -106,6 +111,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+uint64          usedPages_count(void);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -147,6 +153,7 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+int             COW_fault_handler(pagetable_t, uint64);
 
 // uart.c
 void            uartinit(void);
@@ -173,6 +180,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+uint64          count_used_pages(pagetable_t);
 
 // plic.c
 void            plicinit(void);

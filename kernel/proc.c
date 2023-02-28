@@ -681,3 +681,21 @@ procdump(void)
     printf("\n");
   }
 }
+
+// count all the live pages in the process's page table
+uint64
+usedPages_count(void)
+{
+  struct proc *p = myproc();
+  uint64 count = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->state != UNUSED && p->state != ZOMBIE) {
+      int n = count_used_pages(p->pagetable);
+      printf("PID: %d, Pages Used: %d\n", p->pid, n);
+      count += n;
+    }
+  }
+
+  return count;
+}
