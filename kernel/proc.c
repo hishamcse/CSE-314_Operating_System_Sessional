@@ -12,6 +12,19 @@ struct proc proc[NPROC];
 
 struct proc *initproc;
 
+struct page {
+  uint64 va;      // virtual page number of the page
+  int procId;     // id of the process that owns the page
+  int age;        // age of the page (used for LRU page replacement policy)
+};
+
+struct swap_page {
+  uint64 va;      // virtual page number of the page
+  int procId;     // id of the process that owns the page
+  int age;        // age of the page (used for LRU page replacement policy)
+  struct swap *swapRecord; // swap struct of the page
+};
+
 int nextpid = 1;
 struct spinlock pid_lock;
 
@@ -19,6 +32,12 @@ extern void forkret(void);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+
+struct page phys_mem[MAX_PSYC_PAGES]; // array of live pages in physical memory
+struct swap_page swap_mem_pages[MAX_TOTAL_PAGES]; // array of pages in swap memory
+
+int num_of_live_pages = 0; // number of live pages in physical memory
+int num_of_swap_pages = 0; // number of pages in swap memory
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -33,7 +52,7 @@ void
 proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
-  
+
   for(p = proc; p < &proc[NPROC]; p++) {
     char *pa = kalloc();
     if(pa == 0)
@@ -48,7 +67,7 @@ void
 procinit(void)
 {
   struct proc *p;
-  
+
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
   for(p = proc; p < &proc[NPROC]; p++) {
@@ -93,7 +112,7 @@ int
 allocpid()
 {
   int pid;
-  
+
   acquire(&pid_lock);
   pid = nextpid;
   nextpid = nextpid + 1;
@@ -159,7 +178,7 @@ freeproc(struct proc *p)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
+    proc_freepagetable(p->pagetable, p->sz, p->pid);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -188,17 +207,17 @@ proc_pagetable(struct proc *p)
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
-              (uint64)trampoline, PTE_R | PTE_X) < 0){
-    uvmfree(pagetable, 0);
+              (uint64)trampoline, PTE_R | PTE_X, 0) < 0){
+    uvmfree(pagetable, 0, 0);
     return 0;
   }
 
   // map the trapframe page just below the trampoline page, for
   // trampoline.S.
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
-              (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
-    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-    uvmfree(pagetable, 0);
+              (uint64)(p->trapframe), PTE_R | PTE_W, 0) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0, 0);
+    uvmfree(pagetable, 0, 0);
     return 0;
   }
 
@@ -208,11 +227,11 @@ proc_pagetable(struct proc *p)
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
-proc_freepagetable(pagetable_t pagetable, uint64 sz)
+proc_freepagetable(pagetable_t pagetable, uint64 sz, int pid)
 {
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(pagetable, TRAPFRAME, 1, 0);
-  uvmfree(pagetable, sz);
+  uvmunmap(pagetable, TRAMPOLINE, 1, 0, 0);
+  uvmunmap(pagetable, TRAPFRAME, 1, 0, 0);
+  uvmfree(pagetable, sz, pid);
 }
 
 // a user program that calls exec("/init")
@@ -236,10 +255,10 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
+
   // allocate one user page and copy initcode's instructions
   // and data into it.
-  uvmfirst(p->pagetable, initcode, sizeof(initcode));
+  uvmfirst(p->pagetable, initcode, sizeof(initcode), p -> pid);
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -264,11 +283,11 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W, p->pid)) == 0) {
       return -1;
     }
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    sz = uvmdealloc(p->pagetable, sz, sz + n, p -> pid);
   }
   p->sz = sz;
   return 0;
@@ -288,12 +307,15 @@ fork(void)
     return -1;
   }
 
+  release(&np->lock);
+
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz, np->pid) < 0){
     freeproc(np);
-    release(&np->lock);
     return -1;
   }
+
+  acquire(&np->lock);
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -372,7 +394,7 @@ exit(int status)
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
-  
+
   acquire(&p->lock);
 
   p->xstate = status;
@@ -428,7 +450,7 @@ wait(uint64 addr)
       release(&wait_lock);
       return -1;
     }
-    
+
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
   }
@@ -446,7 +468,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
+
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
@@ -536,7 +558,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -615,7 +637,7 @@ int
 killed(struct proc *p)
 {
   int k;
-  
+
   acquire(&p->lock);
   k = p->killed;
   release(&p->lock);
@@ -680,4 +702,273 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// swapout a page from the physical memory
+void
+swapout_page(uint64 va, int pid)
+{
+  struct page *pg = find_page_to_swap_out_fifo();
+  if(pg == 0) {
+    printf("swapout_page: no page to swap out found\n");
+    return;
+  }
+
+  struct proc *p;
+  pte_t *pte;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->pid == pg -> procId) {
+      printf("swapout_page: found pid: %d\n", p->pid);
+      pte = walk(p->pagetable, pg->va, 0);
+      printf("swapout_page: pte: %p\n", pte);
+      if (pte == 0) {
+        printf("swapout_page: no physical address found for va: %p\n", pg->va);
+        return;
+      }
+
+      struct swap *sw = swapalloc();
+      printf("swapout_page: sw: %p\n", sw);
+      if (sw == 0) {
+        printf("swapout_page: no swap space found\n");
+        return;
+      }
+
+      uint64 pa = PTE2PA(*pte);
+      printf("swapout_page: pa: %p\n", pa);
+      swapout(sw, (char *)pa);
+      printf("swapout_page: swapped out page: %p\n", pa);
+
+      *pte &= ~PTE_V;
+      *pte |= PTE_SWAP;
+
+      kfree((void*)pa);
+
+      add_page_to_swap_mem(pg->va, pg->procId, sw);
+
+      remove_page_from_phys_mem(pg->va, pg->procId);
+      if(pid != 0) add_page_to_phys_mem(va, pid);
+
+      printf("num_of_live_pages: %d, num_of_swap_pages: %d\n", num_of_live_pages, num_of_swap_pages);
+
+      break;
+    }
+  }
+}
+
+// swap in a page from swap memory to physical memory
+void
+swapin_page(struct proc *p, uint64 va, pte_t *pte)
+{
+    printf("swapin_page: va: %p, pid: %d\n", va, p->pid);
+    struct swap_page *sw_pg = find_page_from_swap_mem(va, p->pid);
+    if(sw_pg == 0) {
+      printf("swapin_page: no page to swap in found\n");
+      return;
+    }
+
+    if(num_of_live_pages >= MAX_PSYC_PAGES) {
+      printf("swapin_page: too many live pages in physical memory. so, first swap out\n");
+      swapout_page(0, 0);
+    }
+
+    uint64 pa = (uint64)kalloc();
+    if(pa == 0) {
+      printf("swapin_page: no physical memory found\n");
+      return;
+    }
+
+    swapin((char *)pa, sw_pg->swapRecord);
+
+    // printf("swapin_page: swapped in page: %p\n", pa);
+    swapfree(sw_pg->swapRecord);      // free the swap struct
+
+    mappages(p->pagetable, va, PGSIZE, pa, PTE_W|PTE_X|PTE_R|PTE_U, 0);
+
+    // printf("swapin_page: page mapped\n");
+    remove_page_from_swap_mem(sw_pg->va, sw_pg->procId);
+    add_page_to_phys_mem(sw_pg->va, sw_pg->procId);
+
+    *pte &= ~PTE_SWAP;
+    *pte |= PTE_V;
+    printf("num_of_live_pages: %d, num_of_swap_pages: %d\n", num_of_live_pages, num_of_swap_pages);
+}
+
+// swap in a page from swap memory to physical memory
+uint64
+swapin_page_pid(int pid, uint64 va, pte_t *pte)
+{
+    printf("swapin_page_pid: va: %p, pid: %d\n", va, pid);
+    struct swap_page *sw_pg = find_page_from_swap_mem(va, pid);
+    if(sw_pg == 0) {
+      printf("swapin_page_pid: no page to swap in found\n");
+      return -1;
+    }
+
+    if(num_of_live_pages >= MAX_PSYC_PAGES) {
+      printf("swapin_page_pid: too many live pages in physical memory. so, first swap out\n");
+      swapout_page(0, 0);
+    }
+
+    uint64 pa = (uint64)kalloc();
+    if(pa == 0) {
+      printf("swapin_page_pid: no physical memory found\n");
+      return -1;
+    }
+
+    swapin((char *)pa, sw_pg->swapRecord);
+
+    swapfree(sw_pg->swapRecord);      // free the swap struct
+
+    add_page_to_phys_mem(sw_pg->va, sw_pg->procId);
+    remove_page_from_swap_mem(sw_pg->va, sw_pg->procId);
+
+    *pte &= ~PTE_SWAP;
+    *pte |= PTE_V;
+
+    return pa;
+}
+
+// add a live page to the physical memory
+void
+add_page_to_phys_mem(uint64 va, int pid)
+{
+  if(num_of_live_pages >= MAX_PSYC_PAGES) {
+    printf("add_page_to_phys_mem: too many live pages in physical memory\n");
+    swapout_page(va, pid);
+    return;
+  }
+
+  phys_mem[num_of_live_pages].va = va;
+  phys_mem[num_of_live_pages].procId = pid;
+  phys_mem[num_of_live_pages].age = 0;
+
+  // printf("add_page_to_phys_mem: va: %p, pid: %d\n", va, pid);
+
+  num_of_live_pages++;
+}
+
+// remove a live page from the physical memory
+void
+remove_page_from_phys_mem(uint64 va, int pid)
+{
+  int i;
+  for(i = 0; i < num_of_live_pages; i++)
+  {
+    if(phys_mem[i].va == va && phys_mem[i].procId == pid)
+    {
+      // printf("remove found va: %p, pid: %d\n", va, pid);
+      phys_mem[i] = phys_mem[num_of_live_pages - 1];
+      num_of_live_pages--;
+      return;
+    }
+  }
+}
+
+// add a swap page to the swap memory
+void
+add_page_to_swap_mem(uint64 va, int pid, struct swap *sw)
+{
+  printf("add_page_to_swap_mem: va: %p, pid: %d\n", va, pid);
+  swap_mem_pages[num_of_swap_pages].va = va;
+  swap_mem_pages[num_of_swap_pages].procId = pid;
+  swap_mem_pages[num_of_swap_pages].age = 0;
+  swap_mem_pages[num_of_swap_pages].swapRecord = sw;
+
+  num_of_swap_pages++;
+}
+
+// remove a swap page from the swap memory
+void
+remove_page_from_swap_mem(uint64 va, int pid)
+{
+  int i;
+  for(i = 0; i < num_of_swap_pages; i++)
+  {
+    if(swap_mem_pages[i].va == va && swap_mem_pages[i].procId == pid)
+    {
+      swap_mem_pages[i] = swap_mem_pages[num_of_swap_pages - 1];
+      num_of_swap_pages--;
+      return;
+    }
+  }
+}
+
+// remove a swap page from the swap memory and free the swap struct
+void remove_swap_pg(uint64 va, int pid, pte_t *pte) {
+  int i;
+  for(i = 0; i < num_of_swap_pages; i++)
+  {
+    if(swap_mem_pages[i].va == va && swap_mem_pages[i].procId == pid)
+    {
+      swapfree(swap_mem_pages[i].swapRecord);
+      *pte &= ~PTE_SWAP;
+      *pte |= PTE_V;
+      swap_mem_pages[i] = swap_mem_pages[num_of_swap_pages - 1];
+      num_of_swap_pages--;
+      return;
+    }
+  }
+}
+
+// find a live page in the physical memory according to LRU algorithm
+struct page*
+find_page_to_swap_out(void)
+{
+  int i;
+  int min_age = phys_mem[0].age;
+  int min_age_index = 0;
+  for(i = 1; i < num_of_live_pages; i++)
+  {
+    if(phys_mem[i].age < min_age)
+    {
+      min_age = phys_mem[i].age;
+      min_age_index = i;
+    }
+  }
+  return &phys_mem[min_age_index];
+}
+
+// find a live page in the physical memory according to FIFO(First In First Out) algorithm
+struct page*
+find_page_to_swap_out_fifo(void)
+{
+  return &phys_mem[0];
+}
+
+// find a page in the swap memory
+struct swap_page*
+find_page_from_swap_mem(uint64 va, int pid)
+{
+  int i;
+  for(i = 0; i < num_of_swap_pages; i++)
+  {
+    if(swap_mem_pages[i].va == va && swap_mem_pages[i].procId == pid)
+    {
+      return &swap_mem_pages[i];
+    }
+  }
+  return 0;
+}
+
+// return the number of live pages in the physical memory
+int
+stats(void)
+{
+  struct proc *p = myproc();
+  uint64 count = 0;
+
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->state != UNUSED && p->state != ZOMBIE) {
+      int n = count_used_pages(p->pagetable);
+      printf("PID: %d, Pages Used: %d\n", p->pid, n);
+      count += n;
+    }
+  }
+
+  printf("num_of_live_pages: %d\n", num_of_live_pages);
+  printf("actual count: %d\n", count);
+
+  printf("num_of_swap_pages: %d\n", num_of_swap_pages);
+
+  return count;
 }

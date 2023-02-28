@@ -9,6 +9,10 @@ struct sleeplock;
 struct stat;
 struct superblock;
 
+struct swap;
+struct page;
+struct swap_page;
+
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -36,6 +40,8 @@ int             filewrite(struct file*, uint64, int n);
 
 // fs.c
 void            fsinit(int);
+uint            balloc(uint dev);
+void            bfree(int dev, uint b);
 int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
 struct inode*   ialloc(uint, short);
@@ -88,7 +94,7 @@ int             fork(void);
 int             growproc(int);
 void            proc_mapstacks(pagetable_t);
 pagetable_t     proc_pagetable(struct proc *);
-void            proc_freepagetable(pagetable_t, uint64);
+void            proc_freepagetable(pagetable_t, uint64, int);
 int             kill(int);
 int             killed(struct proc*);
 void            setkilled(struct proc*);
@@ -106,6 +112,25 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+void            add_page_to_phys_mem(uint64 va, int pid);
+void            remove_page_from_phys_mem(uint64 va, int pid);
+void            add_page_to_swap_mem(uint64 va, int pid, struct swap *sw);
+void            remove_page_from_swap_mem(uint64 va, int pid);
+void            remove_swap_pg(uint64 va, int pid, pte_t *pte);
+struct page*    find_page_to_swap_out(void);
+struct page*    find_page_to_swap_out_fifo(void);
+struct swap_page* find_page_from_swap_mem(uint64 va, int pid);
+void            swapout_page(uint64 va, int pid);
+void            swapin_page(struct proc *p, uint64 va, pte_t *pte);
+uint64          swapin_page_pid(int pid, uint64 va, pte_t *pte);
+int             stats(void);
+
+// swap.c
+void            swapinit(void);
+void            swapfree(struct swap*);
+struct swap*    swapalloc(void);
+void            swapout(struct swap *dst_sp, char *src_pa);
+void            swapin(char *dst_pa, struct swap *src_sp);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -147,6 +172,7 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+int             page_fault_handler(struct proc *p);
 
 // uart.c
 void            uartinit(void);
@@ -159,20 +185,21 @@ int             uartgetc(void);
 void            kvminit(void);
 void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
-int             mappages(pagetable_t, uint64, uint64, uint64, int);
+int             mappages(pagetable_t, uint64, uint64, uint64, int, int);
 pagetable_t     uvmcreate(void);
-void            uvmfirst(pagetable_t, uchar *, uint);
-uint64          uvmalloc(pagetable_t, uint64, uint64, int);
-uint64          uvmdealloc(pagetable_t, uint64, uint64);
-int             uvmcopy(pagetable_t, pagetable_t, uint64);
-void            uvmfree(pagetable_t, uint64);
-void            uvmunmap(pagetable_t, uint64, uint64, int);
+void            uvmfirst(pagetable_t, uchar *, uint, int);
+uint64          uvmalloc(pagetable_t, uint64, uint64, int, int);
+uint64          uvmdealloc(pagetable_t, uint64, uint64, int);
+int             uvmcopy(pagetable_t, pagetable_t, uint64, int);
+void            uvmfree(pagetable_t, uint64, int);
+void            uvmunmap(pagetable_t, uint64, uint64, int, int);
 void            uvmclear(pagetable_t, uint64);
 pte_t *         walk(pagetable_t, uint64, int);
 uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+int             count_used_pages(pagetable_t);
 
 // plic.c
 void            plicinit(void);

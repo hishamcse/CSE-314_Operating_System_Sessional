@@ -89,3 +89,11 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// return the number of live pages in the system
+uint64
+sys_statLivePages(void)
+{
+  stats();
+  return 0;
+}
